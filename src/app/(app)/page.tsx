@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { writeAllFollowUps, writeFollowUp } from "@/app/actions";
+import { syncAll, writeAllFollowUps, writeFollowUp } from "@/app/actions";
 import { db } from "@/lib/db";
 import { STATUSES, STATUS_LABELS } from "@/lib/constants";
 import { followUpDueWhere } from "@/lib/workflow";
@@ -44,7 +44,16 @@ export default async function Dashboard({ searchParams }: { searchParams: Search
 
   return (
     <div>
-      <PageHeader title="Dashboard" subtitle={`${total} hunted brands across ${clientCount} clients`} />
+      <PageHeader
+        title="Dashboard"
+        subtitle={`${total} hunted brands across ${clientCount} clients`}
+        actions={
+          <form action={syncAll}>
+            <input type="hidden" name="returnTo" value="/" />
+            <button className={btnSecondary}>Sync all mailboxes</button>
+          </form>
+        }
+      />
       <Flash msg={one(sp.msg)} error={one(sp.error)} />
 
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">

@@ -308,6 +308,17 @@ export async function deleteMailbox(form: FormData) {
   redirect(withParam(`/clients/${mb.clientId}`, "msg", "Mailbox removed"));
 }
 
+export async function syncAll(form: FormData) {
+  return run(back(form, "/"), async () => {
+    const results = await wf.syncAllMailboxes();
+    if (!results.length) return "No real mailboxes connected yet";
+    const imported = results.reduce((n, r) => n + (r.imported ?? 0), 0);
+    const failed = results.filter((r) => r.error);
+    if (failed.length) throw new Error(`Synced with ${failed.length} failure(s). ${failed[0].address}: ${failed[0].error}`);
+    return `Synced ${results.length} mailbox${results.length === 1 ? "" : "es"}, ${imported} new message${imported === 1 ? "" : "s"}`;
+  });
+}
+
 export async function syncMailbox(form: FormData) {
   const id = str(form, "id")!;
   return run(back(form, "/"), async () => {

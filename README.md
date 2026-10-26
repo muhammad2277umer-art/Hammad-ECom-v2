@@ -55,7 +55,7 @@ Set `ANTHROPIC_API_KEY` and the Write draft buttons use Claude to write a person
 1. Push this project to a GitHub repository.
 2. In Vercel, **Add New Project**, import the repository.
 3. Add the same environment variables as your `.env` (`DATABASE_URL`, `DIRECT_URL`, `APP_SECRET`, `APP_PASSWORD`, `CRON_SECRET`, optional `ANTHROPIC_API_KEY`).
-4. Deploy. `vercel.json` schedules a mailbox sync every 6 hours (Vercel's Hobby plan only allows one run per day; change the schedule to `0 6 * * *` there, or use Pro).
+4. Deploy. `vercel.json` runs a mailbox sync once a day at 06:00 UTC, the most Vercel's Hobby plan allows. For fresher mail, use **Sync all mailboxes** on the dashboard or **Sync now** on a client page any time. On Vercel Pro you can change the schedule to something like `0 */2 * * *`.
 
 ## Project layout
 
