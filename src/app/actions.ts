@@ -28,11 +28,17 @@ function withParam(path: string, key: string, value: string) {
 }
 
 // Runs an action, then returns to the page with a success or error banner.
-async function run(returnTo: string, fn: () => Promise<string | void>, success?: string): Promise<never> {
+async function run(
+  returnTo: string,
+  fn: () => Promise<string | void>,
+  success?: string,
+  successTo?: () => string,
+): Promise<never> {
   let target: string;
   try {
     const msg = (await fn()) || success;
-    target = msg ? withParam(returnTo, "msg", msg) : returnTo;
+    const to = successTo?.() ?? returnTo;
+    target = msg ? withParam(to, "msg", msg) : to;
   } catch (err) {
     target = withParam(returnTo, "error", err instanceof Error ? err.message : String(err));
   }
@@ -224,9 +230,14 @@ export async function setVendorStatus(form: FormData) {
 // ---- products ----
 
 export async function saveProduct(form: FormData) {
-  const vendorId = str(form, "vendorId")!;
+  const vendorId = str(form, "vendorId");
   const id = str(form, "id");
-  return run(`/vendors/${vendorId}?tab=products`, async () => {
+  const returnTo = back(form, vendorId ? `/vendors/${vendorId}?tab=products` : "/products");
+  // Adding from the Products page opens the new product.
+  const fromProductsPage = returnTo.startsWith("/products/new");
+  let target = returnTo;
+  return run(returnTo, async () => {
+    if (!vendorId) throw new Error("Choose the vendor that sells this product.");
     const asin = str(form, "asin")?.toUpperCase();
     if (!asin) throw new Error("ASIN is required.");
     const aPlus = str(form, "aPlus");
@@ -249,16 +260,19 @@ export async function saveProduct(form: FormData) {
       forecastPurchase: int(form, "forecastPurchase"),
     };
     if (data.rating !== null && (data.rating < 0 || data.rating > 5)) throw new Error("Rating must be between 0 and 5.");
-    if (id) await db.product.update({ where: { id }, data });
-    else await db.product.create({ data: { ...data, vendorId } });
-  }, id ? "Product updated" : "Product added");
+    if (id) await db.product.update({ where: { id }, data: { ...data, vendorId } });
+    else {
+      const created = await db.product.create({ data: { ...data, vendorId } });
+      if (fromProductsPage) target = `/products/${created.id}`;
+    }
+  }, id ? "Product updated" : "Product added", () => target);
 }
 
 export async function deleteProduct(form: FormData) {
   const id = str(form, "id")!;
   const p = await db.product.delete({ where: { id } });
   revalidatePath("/", "layout");
-  redirect(withParam(`/vendors/${p.vendorId}?tab=products`, "msg", "Product deleted"));
+  redirect(withParam(back(form, `/vendors/${p.vendorId}?tab=products`), "msg", "Product deleted"));
 }
 
 // ---- lead activity ----

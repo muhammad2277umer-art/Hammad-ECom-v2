@@ -1,6 +1,6 @@
-import type { Product } from "@prisma/client";
+import type { Product, Vendor } from "@prisma/client";
 import { saveProduct } from "@/app/actions";
-import { BSR_DAYS, DOMINANT_SELLER_DAYS, PRICE_DAYS, STOCK_RATE_DAYS } from "@/lib/constants";
+import { BSR_DAYS, DOMINANT_SELLER_DAYS, PRICE_DAYS, STOCK_RATE_DAYS, VENDOR_LABELS } from "@/lib/constants";
 import { Field, btnPrimary, input } from "./ui";
 
 function Days({ name, options, value }: { name: string; options: number[]; value?: number | null }) {
@@ -13,16 +13,36 @@ function Days({ name, options, value }: { name: string; options: number[]; value
 
 // Product research fields. Metrics with a period take one value plus the
 // window it was measured over (only the allowed windows can be picked).
-export function ProductForm({ vendorId, product }: { vendorId: string; product?: Product | null }) {
+// Pass `vendors` to let the user pick (or move the product to) a vendor;
+// otherwise the product belongs to `vendorId`.
+export function ProductForm({ vendorId, product, vendors, returnTo }: {
+  vendorId?: string;
+  product?: Product | null;
+  vendors?: Pick<Vendor, "id" | "name" | "type">[];
+  returnTo?: string;
+}) {
   const v = (k: keyof Product) => {
     const x = product?.[k];
     return x === null || x === undefined ? "" : String(x);
   };
   return (
     <form action={saveProduct} className="space-y-3">
-      <input type="hidden" name="vendorId" value={vendorId} />
+      {!vendors && <input type="hidden" name="vendorId" value={vendorId} />}
       {product && <input type="hidden" name="id" value={product.id} />}
+      {returnTo && <input type="hidden" name="returnTo" value={returnTo} />}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {vendors && (
+          <Field label="Vendor *" className="sm:col-span-2 lg:col-span-4">
+            <select name="vendorId" required defaultValue={vendorId ?? ""} className={input}>
+              <option value="" disabled>Choose a vendor</option>
+              {(["BRAND", "WHOLESALER", "RETAILER"] as const).map((t) => (
+                <optgroup key={t} label={`${VENDOR_LABELS[t]}s`}>
+                  {vendors.filter((x) => x.type === t).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                </optgroup>
+              ))}
+            </select>
+          </Field>
+        )}
         <Field label="ASIN *"><input name="asin" required defaultValue={v("asin")} placeholder="B0XXXXXXXX" className={input} /></Field>
         <Field label="Sub-niche"><input name="subNiche" defaultValue={v("subNiche")} className={input} /></Field>
         <Field label="BSR">

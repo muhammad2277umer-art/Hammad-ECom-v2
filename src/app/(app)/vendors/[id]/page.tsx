@@ -199,7 +199,7 @@ export default async function VendorPage({ params, searchParams }: { params: Pro
                 {vendor.products.map((p) => (
                   <tr key={p.id} className={p.id === editProduct?.id ? "bg-indigo-50/50" : "hover:bg-slate-50"}>
                     <td className={`${td} font-mono text-xs`}>
-                      <a href={`https://www.amazon.com/dp/${p.asin}`} target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">{p.asin}</a>
+                      <Link href={`/products/${p.id}`} className="text-indigo-600 hover:underline">{p.asin}</Link>
                     </td>
                     <td className={td}>{p.subNiche}</td>
                     <td className={td}>{numFmt(p.bsr)}{p.bsr !== null && periodTag(p.bsrDays)}</td>

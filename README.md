@@ -11,6 +11,7 @@ Built with Next.js 15 (React + server in one app), TypeScript, Prisma and Postgr
   - **Contact**: any number of emails, contact numbers, website links and social media links. The first email receives outreach.
   - **Lead Status**: the full history of calls, meetings, messages, notes, status changes and every email sent or received. Log new activities from the same tab.
   - **Purchasing Plan**: opens once the vendor is **Approved**. A table of products with MOQ, ASIN, cost price, quantity, measuring unit and total, with a plan total. Lines below MOQ are flagged.
+- **Products page**: every product from every vendor in one table. Search by ASIN, sub-niche or vendor, filter by vendor type, vendor, client or A+, and sort by monthly sales, BSR, price, reviews, rating or forecast purchase. Each product has its own page showing its vendor, other vendors offering the same ASIN, and the purchasing plans it's in.
 - **Status workflow**: every vendor starts as **UnTouched**. Sending the outreach email sets it to **Emailed**. A reply sets it to **Follow Up**. You mark it **Approved** or **Rejected**. Every change is recorded in Lead Status.
 - **Write draft**: one click writes an outreach email (worded for a brand, wholesaler or retailer) and saves it to the client's mailbox Drafts. Edit it, then send.
 - **Write follow-up draft**: available for Emailed vendors with no reply 3 days after the last email. The dashboard lists every vendor that's due, with a "write all" button.
@@ -71,5 +72,5 @@ Set `ANTHROPIC_API_KEY` and the Write draft buttons use Claude to write a person
 - `src/lib/workflow.ts`: drafts, sending, follow-up rules, mailbox sync and status changes
 - `src/lib/mail/`: mailbox providers (`imap.ts`, `demo.ts`). Add a Gmail API or Microsoft Graph provider here by implementing `MailAdapter`.
 - `src/lib/drafts.ts`: outreach and follow-up email text
-- `src/app/(app)/`: pages (dashboard, vendors, clients, categories)
+- `src/app/(app)/`: pages (dashboard, vendors, products, clients, categories)
 - `src/app/actions.ts`: form actions
