@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { BrandStatus } from "@prisma/client";
+import type { LeadStatus } from "@prisma/client";
 import { STATUS_LABELS, STATUS_STYLES } from "@/lib/constants";
 
 export const btn =
@@ -11,7 +11,7 @@ export const btnSuccess = `${btn} bg-emerald-600 text-white hover:bg-emerald-700
 export const input =
   "w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
 
-export function StatusBadge({ status }: { status: BrandStatus }) {
+export function StatusBadge({ status }: { status: LeadStatus }) {
   return (
     <span className={`inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[status]}`}>
       {STATUS_LABELS[status]}
@@ -111,14 +111,17 @@ export function Stat({ label, value, href, tone = "text-slate-900" }: {
   return href ? <Link href={href}>{inner}</Link> : inner;
 }
 
+// Dates render on the server, so show them in the team's time zone rather than the server's.
+const TZ = process.env.APP_TIMEZONE || undefined;
+
 export function fmtDate(d?: Date | null) {
   if (!d) return "";
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: TZ });
 }
 
 export function fmtDateTime(d?: Date | null) {
   if (!d) return "";
-  return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: TZ });
 }
 
 export type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -126,3 +129,14 @@ export type SearchParams = Promise<Record<string, string | string[] | undefined>
 export function one(v: string | string[] | undefined) {
   return Array.isArray(v) ? v[0] : v;
 }
+
+export function money(v: { toString(): string } | number | null | undefined) {
+  if (v === null || v === undefined) return "";
+  return Number(v.toString()).toLocaleString("en-US", { style: "currency", currency: "USD" });
+}
+
+export function numFmt(v: number | null | undefined, suffix = "") {
+  if (v === null || v === undefined) return "";
+  return `${v.toLocaleString("en-US")}${suffix}`;
+}
+

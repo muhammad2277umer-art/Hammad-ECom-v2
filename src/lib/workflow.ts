@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
-import type { Brand, EmailMessage, Mailbox, Prisma } from "@prisma/client";
+import type { EmailMessage, LeadStatus, Mailbox, Prisma, Vendor } from "@prisma/client";
 import { db } from "./db";
-import { FOLLOW_UP_AFTER_DAYS } from "./constants";
+import { FOLLOW_UP_AFTER_DAYS, STATUS_LABELS } from "./constants";
 import { followUpDraft, outreachDraft } from "./drafts";
 import { adapterFor } from "./mail";
 import type { OutgoingMessage } from "./mail/types";
@@ -12,27 +12,27 @@ export function followUpCutoff(now = new Date()) {
   return new Date(now.getTime() - FOLLOW_UP_AFTER_DAYS * DAY);
 }
 
-// Brands that were emailed, haven't replied, were last emailed 3+ days ago,
+// Vendors that were emailed, haven't replied, were last emailed 3+ days ago,
 // and don't already have a follow-up draft waiting.
-export function followUpDueWhere(now = new Date()): Prisma.BrandWhereInput {
+export function followUpDueWhere(now = new Date()): Prisma.VendorWhereInput {
   return {
     status: "EMAILED",
     repliedAt: null,
     lastEmailedAt: { lte: followUpCutoff(now) },
-    emails: { none: { folder: "DRAFT", kind: "FOLLOW_UP" } },
+    emailMessages: { none: { folder: "DRAFT", kind: "FOLLOW_UP" } },
   };
 }
 
 export function isFollowUpDue(
-  brand: Pick<Brand, "status" | "repliedAt" | "lastEmailedAt">,
+  vendor: Pick<Vendor, "status" | "repliedAt" | "lastEmailedAt">,
   pendingFollowUps: number,
   now = new Date(),
 ) {
   return (
-    brand.status === "EMAILED" &&
-    !brand.repliedAt &&
-    !!brand.lastEmailedAt &&
-    brand.lastEmailedAt <= followUpCutoff(now) &&
+    vendor.status === "EMAILED" &&
+    !vendor.repliedAt &&
+    !!vendor.lastEmailedAt &&
+    vendor.lastEmailedAt <= followUpCutoff(now) &&
     pendingFollowUps === 0
   );
 }
@@ -54,16 +54,38 @@ function toOutgoing(mailbox: Mailbox, m: EmailMessage): OutgoingMessage {
   };
 }
 
-async function loadBrandForDraft(brandId: string) {
-  const brand = await db.brand.findUniqueOrThrow({
-    where: { id: brandId },
+export function primaryEmail(vendor: Pick<Vendor, "emails">) {
+  return vendor.emails[0] ?? null;
+}
+
+async function loadVendorForDraft(vendorId: string) {
+  const vendor = await db.vendor.findUniqueOrThrow({
+    where: { id: vendorId },
     include: { category: true, client: { include: { mailboxes: true } }, mailbox: true },
   });
-  if (!brand.client) throw new Error("Link this brand to a client before writing a draft.");
-  if (!brand.email) throw new Error("Add the brand's email address before writing a draft.");
-  const mailbox = brand.mailbox ?? brand.client.mailboxes[0];
-  if (!mailbox) throw new Error(`Add a mailbox to ${brand.client.name} before writing a draft.`);
-  return { brand: { ...brand, client: brand.client }, mailbox };
+  if (!vendor.client) throw new Error("Link this vendor to a client before writing a draft.");
+  if (!primaryEmail(vendor)) throw new Error("Add the vendor's email address before writing a draft.");
+  const mailbox = vendor.mailbox ?? vendor.client.mailboxes[0];
+  if (!mailbox) throw new Error(`Add a mailbox to ${vendor.client.name} before writing a draft.`);
+  return { vendor: { ...vendor, client: vendor.client }, mailbox, to: primaryEmail(vendor)! };
+}
+
+// Every status change lands in the vendor's Lead Status history.
+export async function changeStatus(vendorId: string, status: LeadStatus, reason?: string, by?: string | null) {
+  const vendor = await db.vendor.findUniqueOrThrow({ where: { id: vendorId } });
+  if (vendor.status === status) return;
+  await db.$transaction([
+    db.vendor.update({ where: { id: vendorId }, data: { status } }),
+    db.activity.create({
+      data: {
+        vendorId,
+        type: "STATUS",
+        summary: `${STATUS_LABELS[vendor.status]} → ${STATUS_LABELS[status]}`,
+        details: reason,
+        by,
+      },
+    }),
+  ]);
 }
 
 async function storeDraft(mailbox: Mailbox, data: Omit<Prisma.EmailMessageUncheckedCreateInput, "mailboxId" | "folder" | "messageId" | "fromAddress">) {
@@ -76,36 +98,36 @@ async function storeDraft(mailbox: Mailbox, data: Omit<Prisma.EmailMessageUnchec
   return draft;
 }
 
-export async function writeOutreachDraft(brandId: string) {
-  const { brand, mailbox } = await loadBrandForDraft(brandId);
-  const content = await outreachDraft(brand, mailbox);
+export async function writeOutreachDraft(vendorId: string) {
+  const { vendor, mailbox, to } = await loadVendorForDraft(vendorId);
+  const content = await outreachDraft(vendor, mailbox);
   return storeDraft(mailbox, {
-    brandId: brand.id,
+    vendorId: vendor.id,
     kind: "OUTREACH",
-    toAddress: brand.email!,
+    toAddress: to,
     subject: content.subject,
     body: content.body,
   });
 }
 
-export async function writeFollowUpDraft(brandId: string) {
-  const { brand, mailbox } = await loadBrandForDraft(brandId);
-  const pending = await db.emailMessage.count({ where: { brandId, folder: "DRAFT", kind: "FOLLOW_UP" } });
-  if (!isFollowUpDue(brand, pending)) {
+export async function writeFollowUpDraft(vendorId: string) {
+  const { vendor, mailbox, to } = await loadVendorForDraft(vendorId);
+  const pending = await db.emailMessage.count({ where: { vendorId, folder: "DRAFT", kind: "FOLLOW_UP" } });
+  if (!isFollowUpDue(vendor, pending)) {
     throw new Error(
-      `A follow-up is only available for Emailed brands with no reply ${FOLLOW_UP_AFTER_DAYS} days after the last email, and no follow-up draft already waiting.`,
+      `A follow-up is only available for Emailed vendors with no reply ${FOLLOW_UP_AFTER_DAYS} days after the last email, and no follow-up draft already waiting.`,
     );
   }
   const lastSent = await db.emailMessage.findFirst({
-    where: { brandId, folder: "SENT" },
+    where: { vendorId, folder: "SENT" },
     orderBy: { date: "desc" },
   });
-  const content = await followUpDraft(brand, mailbox, lastSent ?? { subject: brand.name, body: "" });
+  const content = await followUpDraft(vendor, mailbox, lastSent ?? { subject: vendor.name, body: "" });
   return storeDraft(mailbox, {
-    brandId: brand.id,
+    vendorId: vendor.id,
     kind: "FOLLOW_UP",
     inReplyTo: lastSent?.messageId,
-    toAddress: brand.email!,
+    toAddress: to,
     subject: content.subject,
     body: content.body,
   });
@@ -128,31 +150,26 @@ export async function deleteDraft(id: string) {
   await db.emailMessage.delete({ where: { id } });
 }
 
-// Sent mail to a brand moves an UnTouched brand to Emailed.
-async function applySent(brandId: string, date: Date) {
-  const brand = await db.brand.findUnique({ where: { id: brandId } });
-  if (!brand) return;
-  await db.brand.update({
-    where: { id: brandId },
+// Sent mail to a vendor moves an UnTouched vendor to Emailed.
+async function applySent(vendorId: string, date: Date) {
+  const vendor = await db.vendor.findUnique({ where: { id: vendorId } });
+  if (!vendor) return;
+  await db.vendor.update({
+    where: { id: vendorId },
     data: {
-      status: brand.status === "UNTOUCHED" ? "EMAILED" : undefined,
-      firstEmailedAt: brand.firstEmailedAt ?? date,
-      lastEmailedAt: !brand.lastEmailedAt || brand.lastEmailedAt < date ? date : undefined,
+      firstEmailedAt: vendor.firstEmailedAt ?? date,
+      lastEmailedAt: !vendor.lastEmailedAt || vendor.lastEmailedAt < date ? date : undefined,
     },
   });
+  if (vendor.status === "UNTOUCHED") await changeStatus(vendorId, "EMAILED", "Outreach email sent");
 }
 
-// A reply from an Emailed brand moves it to Follow Up.
-async function applyReply(brandId: string, date: Date) {
-  const brand = await db.brand.findUnique({ where: { id: brandId } });
-  if (!brand || !brand.firstEmailedAt || date < brand.firstEmailedAt) return;
-  await db.brand.update({
-    where: { id: brandId },
-    data: {
-      status: brand.status === "EMAILED" ? "FOLLOW_UP" : undefined,
-      repliedAt: brand.repliedAt ?? date,
-    },
-  });
+// A reply from an Emailed vendor moves it to Follow Up.
+async function applyReply(vendorId: string, date: Date) {
+  const vendor = await db.vendor.findUnique({ where: { id: vendorId } });
+  if (!vendor || !vendor.firstEmailedAt || date < vendor.firstEmailedAt) return;
+  await db.vendor.update({ where: { id: vendorId }, data: { repliedAt: vendor.repliedAt ?? date } });
+  if (vendor.status === "EMAILED") await changeStatus(vendorId, "FOLLOW_UP", "Vendor replied");
 }
 
 export async function sendDraft(id: string) {
@@ -166,7 +183,7 @@ export async function sendDraft(id: string) {
     where: { id },
     data: { folder: "SENT", date: now, imapUid: null },
   });
-  if (sent.brandId) await applySent(sent.brandId, now);
+  if (sent.vendorId) await applySent(sent.vendorId, now);
   return sent;
 }
 
@@ -177,19 +194,19 @@ function domainOf(value?: string | null) {
   return host.replace(/^www\./, "") || null;
 }
 
-type MatchBrand = Pick<Brand, "id" | "email" | "website">;
+type MatchVendor = Pick<Vendor, "id" | "emails" | "websites">;
 
-function matchBrand(brands: MatchBrand[], address: string) {
+function matchVendor(vendors: MatchVendor[], address: string) {
   const a = address.toLowerCase();
-  const exact = brands.find((b) => b.email?.toLowerCase() === a);
+  const exact = vendors.find((v) => v.emails.some((e) => e.toLowerCase() === a));
   if (exact) return exact;
   const d = domainOf(a);
   if (!d) return undefined;
-  return brands.find((b) => domainOf(b.email) === d || domainOf(b.website) === d);
+  return vendors.find((v) => [...v.emails, ...v.websites].some((x) => domainOf(x) === d));
 }
 
 // Mirrors a real mailbox into the app and applies status changes for any
-// mail sent to, or received from, this client's brands.
+// mail sent to, or received from, this client's vendors.
 export async function syncMailbox(mailboxId: string) {
   const mailbox = await db.mailbox.findUniqueOrThrow({ where: { id: mailboxId } });
   const since = new Date((mailbox.lastSyncedAt?.getTime() ?? Date.now() - 30 * DAY) - DAY);
@@ -203,15 +220,15 @@ export async function syncMailbox(mailboxId: string) {
   }
   if (!result) return { imported: 0 };
 
-  const brands = await db.brand.findMany({
+  const vendors = await db.vendor.findMany({
     where: { clientId: mailbox.clientId },
-    select: { id: true, email: true, website: true },
+    select: { id: true, emails: true, websites: true },
   });
   let imported = 0;
 
   for (const m of result.messages) {
     const counterpart = m.folder === "INBOX" ? m.from : m.to;
-    const brand = matchBrand(brands, counterpart);
+    const vendor = matchVendor(vendors, counterpart);
     const existing = await db.emailMessage.findUnique({
       where: { mailboxId_folder_messageId: { mailboxId, folder: m.folder, messageId: m.messageId } },
     });
@@ -229,16 +246,16 @@ export async function syncMailbox(mailboxId: string) {
             where: { mailboxId_folder_messageId: { mailboxId, folder: "DRAFT", messageId: m.messageId } },
           })
         : null;
-    let kind = asDraft?.kind ?? (m.folder === "INBOX" ? (brand ? "REPLY" : "OTHER") : "OTHER");
-    if (!asDraft && m.folder !== "INBOX" && brand) {
-      const priorSent = await db.emailMessage.count({ where: { brandId: brand.id, folder: "SENT" } });
+    let kind = asDraft?.kind ?? (m.folder === "INBOX" ? (vendor ? "REPLY" : "OTHER") : "OTHER");
+    if (!asDraft && m.folder !== "INBOX" && vendor) {
+      const priorSent = await db.emailMessage.count({ where: { vendorId: vendor.id, folder: "SENT" } });
       kind = priorSent ? "FOLLOW_UP" : "OUTREACH";
     }
 
     await db.emailMessage.create({
       data: {
         mailboxId,
-        brandId: asDraft?.brandId ?? brand?.id,
+        vendorId: asDraft?.vendorId ?? vendor?.id,
         folder: m.folder,
         kind,
         messageId: m.messageId,
@@ -253,9 +270,9 @@ export async function syncMailbox(mailboxId: string) {
     });
     imported++;
 
-    const brandId = asDraft?.brandId ?? brand?.id;
-    if (brandId && m.folder === "SENT") await applySent(brandId, m.date);
-    if (brandId && m.folder === "INBOX") await applyReply(brandId, m.date);
+    const vendorId = asDraft?.vendorId ?? vendor?.id;
+    if (vendorId && m.folder === "SENT") await applySent(vendorId, m.date);
+    if (vendorId && m.folder === "INBOX") await applyReply(vendorId, m.date);
   }
 
   // Drafts sent or deleted in the mail client disappear here too.
@@ -286,31 +303,31 @@ export async function syncAllMailboxes() {
   return results;
 }
 
-// Demo mailboxes only: pretend the brand answered, to try the workflow.
-export async function simulateReply(brandId: string) {
-  const brand = await db.brand.findUniqueOrThrow({ where: { id: brandId } });
+// Demo mailboxes only: pretend the vendor answered, to try the workflow.
+export async function simulateReply(vendorId: string) {
+  const vendor = await db.vendor.findUniqueOrThrow({ where: { id: vendorId } });
   const lastSent = await db.emailMessage.findFirst({
-    where: { brandId, folder: "SENT" },
+    where: { vendorId, folder: "SENT" },
     orderBy: { date: "desc" },
     include: { mailbox: true },
   });
-  if (!lastSent) throw new Error("Send an email to this brand first.");
+  if (!lastSent) throw new Error("Send an email to this vendor first.");
   if (lastSent.mailbox.provider !== "DEMO") throw new Error("Simulated replies only work on demo mailboxes.");
   const now = new Date();
   await db.emailMessage.create({
     data: {
       mailboxId: lastSent.mailboxId,
-      brandId,
+      vendorId,
       folder: "INBOX",
       kind: "REPLY",
       messageId: newMessageId(lastSent.mailbox),
       inReplyTo: lastSent.messageId,
-      fromAddress: brand.email ?? "brand@example.com",
+      fromAddress: primaryEmail(vendor) ?? "vendor@example.com",
       toAddress: lastSent.mailbox.address,
       subject: lastSent.subject.startsWith("Re:") ? lastSent.subject : `Re: ${lastSent.subject}`,
-      body: `Hi,\n\nThanks for reaching out. Happy to talk. Can you share more about your store's monthly sales volume?\n\nBest,\n${brand.contactName ?? brand.name}`,
+      body: `Hi,\n\nThanks for reaching out. Happy to talk. Can you share more about your store's monthly sales volume?\n\nBest,\n${vendor.contactName ?? vendor.name}`,
       date: now,
     },
   });
-  await applyReply(brandId, now);
+  await applyReply(vendorId, now);
 }

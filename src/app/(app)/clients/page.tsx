@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
-import { MARKETPLACE_LABELS, STATUS_STYLES } from "@/lib/constants";
+import { MARKETPLACE_LABELS, STATUS_STYLES, VENDOR_LABELS } from "@/lib/constants";
 import { Flash, PageHeader, btnPrimary, one, type SearchParams } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -9,7 +9,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
   const sp = await searchParams;
   const clients = await db.client.findMany({
     include: {
-      brands: { select: { id: true, name: true, status: true }, orderBy: { name: "asc" } },
+      vendors: { select: { id: true, name: true, status: true, type: true }, orderBy: { name: "asc" } },
       mailboxes: { select: { id: true, address: true, _count: { select: { messages: { where: { folder: "DRAFT" } } } } } },
     },
     orderBy: { name: "asc" },
@@ -30,7 +30,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
               <th className="px-3 py-2">Client</th>
               <th className="px-3 py-2">Marketplace</th>
               <th className="px-3 py-2">Contact</th>
-              <th className="px-3 py-2">Brands hunted</th>
+              <th className="px-3 py-2">Vendors hunted</th>
               <th className="px-3 py-2">Mailboxes</th>
               <th className="px-3 py-2">Pending drafts</th>
             </tr>
@@ -50,10 +50,10 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
                     {c.domains.length > 0 && <div className="text-xs text-slate-500">{c.domains.join(", ")}</div>}
                   </td>
                   <td className="px-3 py-2">
-                    <div className="mb-1 text-xs text-slate-500">{c.brands.length} brand{c.brands.length === 1 ? "" : "s"}</div>
+                    <div className="mb-1 text-xs text-slate-500">{c.vendors.length} vendor{c.vendors.length === 1 ? "" : "s"}</div>
                     <div className="flex max-w-md flex-wrap gap-1">
-                      {c.brands.map((b) => (
-                        <Link key={b.id} href={`/brands/${b.id}`} className={`rounded-full px-2 py-0.5 text-xs ${STATUS_STYLES[b.status]}`}>
+                      {c.vendors.map((b) => (
+                        <Link key={b.id} href={`/vendors/${b.id}`} title={VENDOR_LABELS[b.type]} className={`rounded-full px-2 py-0.5 text-xs ${STATUS_STYLES[b.status]}`}>
                           {b.name}
                         </Link>
                       ))}

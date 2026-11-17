@@ -8,7 +8,7 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-enum BrandStatus {
+enum LeadStatus {
   UNTOUCHED
   EMAILED
   FOLLOW_UP
@@ -17,13 +17,9 @@ enum BrandStatus {
 }
 
 enum VendorType {
-  RETAILER
+  BRAND
   WHOLESALER
-  DISTRIBUTOR
-  MANUFACTURER
-  BRAND_OWNER
-  DROPSHIPPER
-  OTHER
+  RETAILER
 }
 
 enum Marketplace {
@@ -47,6 +43,15 @@ enum MailFolder {
   DRAFT
 }
 
+enum ActivityType {
+  CALL
+  EMAIL
+  MEETING
+  MESSAGE
+  NOTE
+  STATUS
+}
+
 enum EmailKind {
   OUTREACH
   FOLLOW_UP
@@ -58,7 +63,7 @@ model Category {
   id        String   @id @default(cuid())
   name      String   @unique
   createdAt DateTime @default(now())
-  brands    Brand[]
+  vendors   Vendor[]
 }
 
 model Client {
@@ -79,40 +84,98 @@ model Client {
   notes        String?
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
-  brands       Brand[]
+  vendors      Vendor[]
   mailboxes    Mailbox[]
 }
 
-model Brand {
-  id             String      @id @default(cuid())
+model Vendor {
+  id             String       @id @default(cuid())
   name           String
+  type           VendorType   @default(BRAND)
   categoryId     String?
-  category       Category?   @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  vendorType     VendorType  @default(BRAND_OWNER)
-  status         BrandStatus @default(UNTOUCHED)
+  category       Category?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  status         LeadStatus   @default(UNTOUCHED)
   clientId       String?
-  client         Client?     @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  client         Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
   mailboxId      String?
-  mailbox        Mailbox?    @relation(fields: [mailboxId], references: [id], onDelete: SetNull)
+  mailbox        Mailbox?     @relation(fields: [mailboxId], references: [id], onDelete: SetNull)
   contactName    String?
-  email          String?
-  phone          String?
-  website        String?
-  instagram      String?
-  facebook       String?
-  tiktok         String?
-  linkedin       String?
+  emails         String[]
+  phones         String[]
+  websites       String[]
+  socials        String[]
   address        String?
   description    String?
   firstEmailedAt DateTime?
   lastEmailedAt  DateTime?
   repliedAt      DateTime?
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
-  emails         EmailMessage[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  emailMessages  EmailMessage[]
+  products       Product[]
+  activities     Activity[]
+  purchaseItems  PurchaseItem[]
 
   @@index([clientId])
   @@index([status])
+  @@index([type])
+}
+
+// Amazon research for one product a vendor sells.
+model Product {
+  id                   String   @id @default(cuid())
+  vendorId             String
+  vendor               Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  asin                 String
+  subNiche             String?
+  bsr                  Int?
+  bsrDays              Int?
+  price                Decimal? @db.Decimal(12, 2)
+  priceDays            Int?
+  monthlySales         Int?
+  amazonStockRate      Float?
+  amazonStockRateDays  Int?
+  dominantSellerPct    Float?
+  dominantSellerDays   Int?
+  aPlus                Boolean?
+  reviews              Int?
+  rating               Float?
+  marketplaceProfile   String?
+  forecastPurchase     Int?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([vendorId])
+}
+
+// Calls, meetings, notes and status changes. Emails come from EmailMessage.
+model Activity {
+  id        String       @id @default(cuid())
+  vendorId  String
+  vendor    Vendor       @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  type      ActivityType
+  summary   String
+  details   String?
+  by        String?
+  date      DateTime     @default(now())
+  createdAt DateTime     @default(now())
+
+  @@index([vendorId, date])
+}
+
+model PurchaseItem {
+  id          String   @id @default(cuid())
+  vendorId    String
+  vendor      Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  asin        String
+  productName String?
+  moq         Int?
+  costPrice   Decimal  @db.Decimal(12, 2)
+  quantity    Int
+  unit        String   @default("Units")
+  createdAt   DateTime @default(now())
+
+  @@index([vendorId])
 }
 
 model Mailbox {
@@ -134,15 +197,15 @@ model Mailbox {
   lastError    String?
   createdAt    DateTime       @default(now())
   messages     EmailMessage[]
-  brands       Brand[]
+  vendors      Vendor[]
 }
 
 model EmailMessage {
   id          String     @id @default(cuid())
   mailboxId   String
   mailbox     Mailbox    @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
-  brandId     String?
-  brand       Brand?     @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  vendorId    String?
+  vendor      Vendor?    @relation(fields: [vendorId], references: [id], onDelete: SetNull)
   folder      MailFolder
   kind        EmailKind  @default(OTHER)
   messageId   String
@@ -157,5 +220,5 @@ model EmailMessage {
   updatedAt   DateTime   @updatedAt
 
   @@unique([mailboxId, folder, messageId])
-  @@index([brandId, folder])
+  @@index([vendorId, folder])
 }

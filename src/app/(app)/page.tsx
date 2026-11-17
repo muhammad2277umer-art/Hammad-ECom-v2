@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { syncAll, writeAllFollowUps, writeFollowUp } from "@/app/actions";
 import { db } from "@/lib/db";
-import { STATUSES, STATUS_LABELS } from "@/lib/constants";
+import { STATUSES, STATUS_LABELS, VENDOR_LABELS, VENDOR_PLURAL, VENDOR_TYPES } from "@/lib/constants";
 import { followUpDueWhere } from "@/lib/workflow";
 import { MessageList } from "@/components/messages";
 import { Card, Flash, PageHeader, Stat, StatusBadge, btnPrimary, btnSecondary, fmtDate, one, type SearchParams } from "@/components/ui";
@@ -17,10 +17,11 @@ const TONES: Record<string, string> = {
 
 export default async function Dashboard({ searchParams }: { searchParams: SearchParams }) {
   const sp = await searchParams;
-  const [byStatus, pendingDrafts, due, clientCount, recentDrafts, recentReplies] = await Promise.all([
-    db.brand.groupBy({ by: ["status"], _count: true }),
+  const [byStatus, byType, pendingDrafts, due, clientCount, recentDrafts, recentReplies] = await Promise.all([
+    db.vendor.groupBy({ by: ["status"], _count: true }),
+    db.vendor.groupBy({ by: ["type"], _count: true }),
     db.emailMessage.count({ where: { folder: "DRAFT" } }),
-    db.brand.findMany({
+    db.vendor.findMany({
       where: followUpDueWhere(),
       include: { client: true },
       orderBy: { lastEmailedAt: "asc" },
@@ -28,13 +29,13 @@ export default async function Dashboard({ searchParams }: { searchParams: Search
     db.client.count(),
     db.emailMessage.findMany({
       where: { folder: "DRAFT" },
-      include: { brand: { select: { id: true, name: true } }, mailbox: { select: { address: true } } },
+      include: { vendor: { select: { id: true, name: true } }, mailbox: { select: { address: true } } },
       orderBy: { updatedAt: "desc" },
       take: 5,
     }),
     db.emailMessage.findMany({
-      where: { folder: "INBOX", brandId: { not: null } },
-      include: { brand: { select: { id: true, name: true } }, mailbox: { select: { address: true } } },
+      where: { folder: "INBOX", vendorId: { not: null } },
+      include: { vendor: { select: { id: true, name: true } }, mailbox: { select: { address: true } } },
       orderBy: { date: "desc" },
       take: 5,
     }),
@@ -46,7 +47,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Search
     <div>
       <PageHeader
         title="Dashboard"
-        subtitle={`${total} hunted brands across ${clientCount} clients`}
+        subtitle={`${total} hunted vendors across ${clientCount} clients`}
         actions={
           <form action={syncAll}>
             <input type="hidden" name="returnTo" value="/" />
@@ -56,12 +57,16 @@ export default async function Dashboard({ searchParams }: { searchParams: Search
       />
       <Flash msg={one(sp.msg)} error={one(sp.error)} />
 
-      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
-        <Stat label="All brands" value={total} href="/brands" />
-        {STATUSES.map((s) => (
-          <Stat key={s} label={STATUS_LABELS[s]} value={counts[s] ?? 0} href={`/brands?status=${s}`} tone={TONES[s]} />
+      <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {VENDOR_TYPES.map((t) => (
+          <Stat key={t} label={VENDOR_PLURAL[t]} value={byType.find((x) => x.type === t)?._count ?? 0} href={`/vendors?type=${t}`} />
         ))}
-        <Stat label="Pending drafts" value={pendingDrafts} href="/brands?drafts=1" tone="text-amber-700" />
+        <Stat label="Pending drafts" value={pendingDrafts} tone="text-amber-700" />
+      </div>
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
+        {STATUSES.map((s) => (
+          <Stat key={s} label={STATUS_LABELS[s]} value={counts[s] ?? 0} tone={TONES[s]} />
+        ))}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -78,13 +83,14 @@ export default async function Dashboard({ searchParams }: { searchParams: Search
           className="lg:col-span-2"
         >
           {due.length === 0 ? (
-            <p className="text-sm text-slate-500">No brands waiting on a follow-up. Brands appear here 3 days after an email with no reply.</p>
+            <p className="text-sm text-slate-500">No vendors waiting on a follow-up. Vendors appear here 3 days after an email with no reply.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-left text-xs text-slate-500">
                   <tr>
-                    <th className="pb-2">Brand</th>
+                    <th className="pb-2">Vendor</th>
+                    <th className="pb-2">Type</th>
                     <th className="pb-2">Client</th>
                     <th className="pb-2">Last emailed</th>
                     <th className="pb-2">Status</th>
@@ -94,13 +100,14 @@ export default async function Dashboard({ searchParams }: { searchParams: Search
                 <tbody className="divide-y divide-slate-100">
                   {due.map((b) => (
                     <tr key={b.id}>
-                      <td className="py-2"><Link href={`/brands/${b.id}`} className="font-medium text-indigo-700 hover:underline">{b.name}</Link></td>
+                      <td className="py-2"><Link href={`/vendors/${b.id}`} className="font-medium text-indigo-700 hover:underline">{b.name}</Link></td>
+                      <td className="py-2">{VENDOR_LABELS[b.type]}</td>
                       <td className="py-2">{b.client?.name}</td>
                       <td className="py-2">{fmtDate(b.lastEmailedAt)}</td>
                       <td className="py-2"><StatusBadge status={b.status} /></td>
                       <td className="py-2 text-right">
                         <form action={writeFollowUp}>
-                          <input type="hidden" name="brandId" value={b.id} />
+                          <input type="hidden" name="vendorId" value={b.id} />
                           <input type="hidden" name="returnTo" value="/" />
                           <button className={btnSecondary}>Write follow-up draft</button>
                         </form>
@@ -116,7 +123,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Search
         <Card title="Latest drafts waiting to send">
           <MessageList messages={recentDrafts} returnTo="/" showMailbox empty="No pending drafts." />
         </Card>
-        <Card title="Latest brand replies">
+        <Card title="Latest vendor replies">
           <MessageList messages={recentReplies} returnTo="/" showMailbox empty="No replies yet." />
         </Card>
       </div>

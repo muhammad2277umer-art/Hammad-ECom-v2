@@ -7,10 +7,10 @@ export const dynamic = "force-dynamic";
 
 export default async function CategoriesPage({ searchParams }: { searchParams: SearchParams }) {
   const sp = await searchParams;
-  const categories = await db.category.findMany({ include: { _count: { select: { brands: true } } }, orderBy: { name: "asc" } });
+  const categories = await db.category.findMany({ include: { _count: { select: { vendors: true } } }, orderBy: { name: "asc" } });
   return (
     <div className="max-w-2xl">
-      <PageHeader title="Categories" subtitle="Create as many brand categories as you need." />
+      <PageHeader title="Categories" subtitle="Create as many vendor categories as you need." />
       <Flash msg={one(sp.msg)} error={one(sp.error)} />
       <Card className="mb-6">
         <form action={createCategory} className="flex gap-2">
@@ -28,8 +28,8 @@ export default async function CategoriesPage({ searchParams }: { searchParams: S
                 <input name="name" defaultValue={c.name} className={input} />
                 <button className={btnSecondary}>Rename</button>
               </form>
-              <Link href={`/brands?categoryId=${c.id}`} className="w-20 text-right text-xs text-indigo-600 hover:underline">
-                {c._count.brands} brand{c._count.brands === 1 ? "" : "s"}
+              <Link href={`/vendors?categoryId=${c.id}`} className="w-20 text-right text-xs text-indigo-600 hover:underline">
+                {c._count.vendors} vendor{c._count.vendors === 1 ? "" : "s"}
               </Link>
               <form action={deleteCategory}>
                 <input type="hidden" name="id" value={c.id} />

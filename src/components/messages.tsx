@@ -1,9 +1,9 @@
 import Link from "next/link";
-import type { Brand, EmailMessage, Mailbox } from "@prisma/client";
+import type { EmailMessage, Mailbox, Vendor } from "@prisma/client";
 import { deleteDraft, saveDraft, sendDraft } from "@/app/actions";
 import { btnDanger, btnPrimary, btnSecondary, fmtDateTime, input } from "./ui";
 
-type Msg = EmailMessage & { brand?: Pick<Brand, "id" | "name"> | null; mailbox?: Pick<Mailbox, "address"> | null };
+type Msg = EmailMessage & { vendor?: Pick<Vendor, "id" | "name"> | null; mailbox?: Pick<Mailbox, "address"> | null };
 
 const KIND_LABEL: Record<EmailMessage["kind"], string> = {
   OUTREACH: "Outreach",
@@ -18,9 +18,9 @@ function Meta({ m, showMailbox }: { m: Msg; showMailbox?: boolean }) {
       {KIND_LABEL[m.kind] && (
         <span className="rounded bg-slate-100 px-1.5 py-0.5 font-medium text-slate-600">{KIND_LABEL[m.kind]}</span>
       )}
-      {m.brand && (
-        <Link href={`/brands/${m.brand.id}`} className="rounded bg-indigo-50 px-1.5 py-0.5 font-medium text-indigo-700 hover:underline">
-          {m.brand.name}
+      {m.vendor && (
+        <Link href={`/vendors/${m.vendor.id}`} className="rounded bg-indigo-50 px-1.5 py-0.5 font-medium text-indigo-700 hover:underline">
+          {m.vendor.name}
         </Link>
       )}
       {showMailbox && m.mailbox && <span>{m.mailbox.address}</span>}

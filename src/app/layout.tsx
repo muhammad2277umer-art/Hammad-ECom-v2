@@ -6,7 +6,7 @@ const geist = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Brand Hunting CRM",
-  description: "Track hunted brands, client outreach and worker mailboxes",
+  description: "Track hunted vendors, client outreach and worker mailboxes",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

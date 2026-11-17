@@ -1,8 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { Brand, Category, Client, Mailbox } from "@prisma/client";
+import type { Category, Client, Mailbox, Vendor } from "@prisma/client";
 import { MARKETPLACE_LABELS } from "./constants";
 
-type BrandCtx = Brand & { category: Category | null; client: Client };
+type VendorCtx = Vendor & { category: Category | null; client: Client };
 
 export type DraftContent = { subject: string; body: string };
 
@@ -14,18 +14,30 @@ function storeName(client: Client) {
   return client.storeName || client.businessName || client.name;
 }
 
-function templateOutreach(brand: BrandCtx, mailbox: Mailbox): DraftContent {
-  const c = brand.client;
+const ASK: Record<Vendor["type"], (name: string) => string> = {
+  BRAND: (name) => `We'd love to explore becoming an authorized reseller of ${name}.`,
+  WHOLESALER: (name) => `We'd like to open a wholesale account with ${name} and source products from your catalog.`,
+  RETAILER: (name) => `We'd like to discuss buying from ${name} at volume for resale.`,
+};
+
+const ROLE: Record<Vendor["type"], string> = {
+  BRAND: "a brand, asking to become an authorized reseller",
+  WHOLESALER: "a wholesaler, asking to open a wholesale account",
+  RETAILER: "a retailer, asking to buy stock at volume for resale",
+};
+
+function templateOutreach(vendor: VendorCtx, mailbox: Mailbox): DraftContent {
+  const c = vendor.client;
   const market = MARKETPLACE_LABELS[c.marketplace];
-  const greeting = brand.contactName ? `Hi ${brand.contactName},` : `Hi ${brand.name} team,`;
-  const category = brand.category ? ` in the ${brand.category.name} category` : "";
+  const greeting = vendor.contactName ? `Hi ${vendor.contactName},` : `Hi ${vendor.name} team,`;
+  const category = vendor.category ? ` in the ${vendor.category.name} category` : "";
   return {
-    subject: `Partnership inquiry: carrying ${brand.name} on ${market}`,
+    subject: `Partnership inquiry: ${vendor.name} x ${storeName(c)} on ${market}`,
     body: `${greeting}
 
-I'm reaching out from ${storeName(c)}, an established seller on ${market}. We've been following ${brand.name} and think your products${category} would be a strong fit for our customers.
+I'm reaching out from ${storeName(c)}, an established seller on ${market}. We've been following ${vendor.name} and think your products${category} would be a strong fit for our customers.
 
-We'd love to explore becoming an authorized reseller of ${brand.name}. We handle listing optimization, advertising and fulfillment, and we protect brand pricing and presentation on the marketplace.
+${ASK[vendor.type](vendor.name)} We handle listing optimization, advertising and fulfillment, and we protect brand pricing and presentation on the marketplace.
 
 Could you share your wholesale terms, or point me to the right person to talk to about an account?
 
@@ -36,14 +48,14 @@ ${mailbox.address}`,
   };
 }
 
-function templateFollowUp(brand: BrandCtx, mailbox: Mailbox, previousSubject: string): DraftContent {
-  const c = brand.client;
-  const greeting = brand.contactName ? `Hi ${brand.contactName},` : `Hi ${brand.name} team,`;
+function templateFollowUp(vendor: VendorCtx, mailbox: Mailbox, previousSubject: string): DraftContent {
+  const c = vendor.client;
+  const greeting = vendor.contactName ? `Hi ${vendor.contactName},` : `Hi ${vendor.name} team,`;
   return {
     subject: previousSubject.startsWith("Re:") ? previousSubject : `Re: ${previousSubject}`,
     body: `${greeting}
 
-I wanted to follow up on my note from a few days ago about carrying ${brand.name} at ${storeName(c)} on ${MARKETPLACE_LABELS[c.marketplace]}.
+I wanted to follow up on my note from a few days ago about working with ${vendor.name} for ${storeName(c)} on ${MARKETPLACE_LABELS[c.marketplace]}.
 
 If now isn't a good time, or there's someone else I should speak with about wholesale accounts, just let me know and I'll reach out to them instead.
 
@@ -69,7 +81,7 @@ async function aiDraft(prompt: string): Promise<DraftContent | null> {
       betas: ["server-side-fallback-2026-07-01"],
       fallbacks: "default",
       system:
-        "You write short, professional B2B outreach emails for an e-commerce reseller contacting brands. " +
+        "You write short, professional B2B outreach emails for an e-commerce reseller contacting brands, wholesalers and retailers. " +
         "Reply with the subject on the first line as 'Subject: ...', a blank line, then the plain-text body. " +
         "No markdown, no placeholders in brackets.",
       messages: [{ role: "user", content: prompt }],
@@ -88,14 +100,14 @@ async function aiDraft(prompt: string): Promise<DraftContent | null> {
   }
 }
 
-function brandFacts(brand: BrandCtx, mailbox: Mailbox) {
-  const c = brand.client;
+function vendorFacts(vendor: VendorCtx, mailbox: Mailbox) {
+  const c = vendor.client;
   return [
-    `Brand: ${brand.name}`,
-    brand.category && `Category: ${brand.category.name}`,
-    brand.website && `Brand website: ${brand.website}`,
-    brand.description && `About the brand: ${brand.description}`,
-    brand.contactName && `Contact name: ${brand.contactName}`,
+    `Vendor: ${vendor.name} (${ROLE[vendor.type]})`,
+    vendor.category && `Category: ${vendor.category.name}`,
+    vendor.websites[0] && `Vendor website: ${vendor.websites[0]}`,
+    vendor.description && `About the vendor: ${vendor.description}`,
+    vendor.contactName && `Contact name: ${vendor.contactName}`,
     `Our store: ${storeName(c)} on ${MARKETPLACE_LABELS[c.marketplace]}`,
     c.website && `Our website: ${c.website}`,
     `Sign as: ${senderName(mailbox, c)}, ${mailbox.address}`,
@@ -104,21 +116,21 @@ function brandFacts(brand: BrandCtx, mailbox: Mailbox) {
     .join("\n");
 }
 
-export async function outreachDraft(brand: BrandCtx, mailbox: Mailbox): Promise<DraftContent> {
+export async function outreachDraft(vendor: VendorCtx, mailbox: Mailbox): Promise<DraftContent> {
   const ai = await aiDraft(
-    `Write a first outreach email asking to become an authorized reseller of this brand.\n\n${brandFacts(brand, mailbox)}`,
+    `Write a first outreach email to this vendor.\n\n${vendorFacts(vendor, mailbox)}`,
   );
-  return ai ?? templateOutreach(brand, mailbox);
+  return ai ?? templateOutreach(vendor, mailbox);
 }
 
 export async function followUpDraft(
-  brand: BrandCtx,
+  vendor: VendorCtx,
   mailbox: Mailbox,
   previous: { subject: string; body: string },
 ): Promise<DraftContent> {
   const ai = await aiDraft(
-    `The brand has not replied for 3 days. Write a brief, polite follow-up to the email below. Keep the subject as "Re: <original subject>".\n\n${brandFacts(brand, mailbox)}\n\nOriginal email:\nSubject: ${previous.subject}\n\n${previous.body}`,
+    `The vendor has not replied for 3 days. Write a brief, polite follow-up to the email below. Keep the subject as "Re: <original subject>".\n\n${vendorFacts(vendor, mailbox)}\n\nOriginal email:\nSubject: ${previous.subject}\n\n${previous.body}`,
   );
-  const fallback = templateFollowUp(brand, mailbox, previous.subject);
+  const fallback = templateFollowUp(vendor, mailbox, previous.subject);
   return ai ? { ...ai, subject: fallback.subject } : fallback;
 }

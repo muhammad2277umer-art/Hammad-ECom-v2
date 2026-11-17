@@ -26,7 +26,7 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
   const client = await db.client.findUnique({
     where: { id },
     include: {
-      brands: { include: { category: true }, orderBy: { name: "asc" } },
+      vendors: { include: { category: true }, orderBy: [{ type: "asc" }, { name: "asc" }] },
       mailboxes: { orderBy: { createdAt: "asc" } },
     },
   });
@@ -34,34 +34,34 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
 
   const mailbox = client.mailboxes.find((m) => m.id === one(sp.mb)) ?? client.mailboxes[0];
   const folder = (FOLDERS.find((f) => f.key === one(sp.folder))?.key ?? "INBOX") as MailFolder;
-  const brandFilter = one(sp.brand);
-  const brandWhere = brandFilter === "none" ? { brandId: null } : brandFilter ? { brandId: brandFilter } : {};
+  const vendorFilter = one(sp.vendor);
+  const vendorWhere = vendorFilter === "none" ? { vendorId: null } : vendorFilter ? { vendorId: vendorFilter } : {};
 
-  const [folderCounts, messages, draftsByBrand] = await Promise.all([
+  const [folderCounts, messages, draftsByVendor] = await Promise.all([
     mailbox
-      ? db.emailMessage.groupBy({ by: ["folder"], where: { mailboxId: mailbox.id, ...brandWhere }, _count: true })
+      ? db.emailMessage.groupBy({ by: ["folder"], where: { mailboxId: mailbox.id, ...vendorWhere }, _count: true })
       : [],
     mailbox
       ? db.emailMessage.findMany({
-          where: { mailboxId: mailbox.id, folder, ...brandWhere },
-          include: { brand: { select: { id: true, name: true } } },
+          where: { mailboxId: mailbox.id, folder, ...vendorWhere },
+          include: { vendor: { select: { id: true, name: true } } },
           orderBy: folder === "DRAFT" ? { updatedAt: "desc" } : { date: "desc" },
           take: 100,
         })
       : [],
     db.emailMessage.groupBy({
-      by: ["brandId", "kind"],
-      where: { folder: "DRAFT", brandId: { in: client.brands.map((b) => b.id) } },
+      by: ["vendorId", "kind"],
+      where: { folder: "DRAFT", vendorId: { in: client.vendors.map((b) => b.id) } },
       _count: true,
     }),
   ]);
   const count = (f: MailFolder) => folderCounts.find((c) => c.folder === f)?._count ?? 0;
-  const drafts = (brandId: string, kind?: string) =>
-    draftsByBrand.filter((d) => d.brandId === brandId && (!kind || d.kind === kind)).reduce((n, d) => n + d._count, 0);
+  const drafts = (vendorId: string, kind?: string) =>
+    draftsByVendor.filter((d) => d.vendorId === vendorId && (!kind || d.kind === kind)).reduce((n, d) => n + d._count, 0);
 
   const mbQuery = (over: Record<string, string | undefined>) => {
     const q = new URLSearchParams();
-    const merged = { mb: mailbox?.id, folder, brand: brandFilter, ...over };
+    const merged = { mb: mailbox?.id, folder, vendor: vendorFilter, ...over };
     for (const [k, v] of Object.entries(merged)) if (v) q.set(k, v);
     return `/clients/${client.id}?${q}#mailbox`;
   };
@@ -72,7 +72,7 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
       <PageHeader
         title={client.name}
         subtitle={`${client.storeName ?? "No store name"} · ${MARKETPLACE_LABELS[client.marketplace]}`}
-        actions={<Link href={`/brands/new?clientId=${client.id}`} className={btnPrimary}>Add brand for this client</Link>}
+        actions={<Link href={`/vendors/new?clientId=${client.id}`} className={btnPrimary}>Add vendor for this client</Link>}
       />
       <Flash msg={one(sp.msg)} error={one(sp.error)} />
 
@@ -96,40 +96,40 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
           {client.notes && <p className="mt-3 whitespace-pre-wrap text-sm text-slate-600">{client.notes}</p>}
         </Card>
 
-        <Card title={`Brands hunted (${client.brands.length})`} className="lg:col-span-2">
-          {client.brands.length === 0 ? (
-            <p className="text-sm text-slate-500">No brands linked yet.</p>
+        <Card title={`Vendors hunted (${client.vendors.length})`} className="lg:col-span-2">
+          {client.vendors.length === 0 ? (
+            <p className="text-sm text-slate-500">No vendors linked yet.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[640px] text-sm">
                 <thead className="text-left text-xs text-slate-500">
-                  <tr><th className="pb-2">Brand</th><th className="pb-2">Category</th><th className="pb-2">Vendor</th><th className="pb-2">Status</th><th className="pb-2">Drafts</th><th /></tr>
+                  <tr><th className="pb-2">Vendor</th><th className="pb-2">Type</th><th className="pb-2">Category</th><th className="pb-2">Status</th><th className="pb-2">Drafts</th><th /></tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {client.brands.map((b) => (
+                  {client.vendors.map((b) => (
                     <tr key={b.id}>
-                      <td className="py-2"><Link href={`/brands/${b.id}`} className="font-medium text-indigo-700 hover:underline">{b.name}</Link></td>
+                      <td className="py-2"><Link href={`/vendors/${b.id}`} className="font-medium text-indigo-700 hover:underline">{b.name}</Link></td>
+                      <td className="py-2">{VENDOR_LABELS[b.type]}</td>
                       <td className="py-2">{b.category?.name}</td>
-                      <td className="py-2">{VENDOR_LABELS[b.vendorType]}</td>
                       <td className="py-2"><StatusBadge status={b.status} /></td>
                       <td className="py-2">
                         {drafts(b.id) ? (
-                          <Link href={mbQuery({ folder: "DRAFT", brand: b.id })} className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">{drafts(b.id)} pending</Link>
+                          <Link href={mbQuery({ folder: "DRAFT", vendor: b.id })} className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">{drafts(b.id)} pending</Link>
                         ) : <span className="text-slate-400">0</span>}
                       </td>
                       <td className="py-2">
                         <div className="flex justify-end gap-1">
                           {isFollowUpDue(b, drafts(b.id, "FOLLOW_UP")) && (
                             <form action={writeFollowUp}>
-                              <input type="hidden" name="brandId" value={b.id} />
+                              <input type="hidden" name="vendorId" value={b.id} />
                               <input type="hidden" name="returnTo" value={returnTo} />
                               <button className={btnPrimary}>Write follow-up</button>
                             </form>
                           )}
                           <form action={writeDraft}>
-                            <input type="hidden" name="brandId" value={b.id} />
+                            <input type="hidden" name="vendorId" value={b.id} />
                             <input type="hidden" name="returnTo" value={returnTo} />
-                            <button className={btnSecondary} disabled={!b.email || !client.mailboxes.length}>Write draft</button>
+                            <button className={btnSecondary} disabled={!b.emails[0] || !client.mailboxes.length}>Write draft</button>
                           </form>
                         </div>
                       </td>
@@ -169,7 +169,7 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
                 {client.mailboxes.map((m) => (
                   <Link
                     key={m.id}
-                    href={mbQuery({ mb: m.id, brand: undefined })}
+                    href={mbQuery({ mb: m.id, vendor: undefined })}
                     className={`rounded-md border px-3 py-1.5 text-sm ${m.id === mailbox.id ? "border-indigo-500 bg-indigo-50 text-indigo-700" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}
                   >
                     {m.address}
@@ -198,10 +198,10 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
                 <form className="flex gap-2" action={`/clients/${client.id}#mailbox`}>
                   <input type="hidden" name="mb" value={mailbox.id} />
                   <input type="hidden" name="folder" value={folder} />
-                  <select name="brand" defaultValue={brandFilter ?? ""} className={input}>
-                    <option value="">All brands</option>
-                    <option value="none">Not linked to a brand</option>
-                    {client.brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                  <select name="vendor" defaultValue={vendorFilter ?? ""} className={input}>
+                    <option value="">All vendors</option>
+                    <option value="none">Not linked to a vendor</option>
+                    {client.vendors.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
                   </select>
                   <button className={btnSecondary}>Filter</button>
                 </form>
@@ -258,7 +258,7 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
           <form action={deleteClient} className="mt-6 border-t border-slate-100 pt-4">
             <input type="hidden" name="id" value={client.id} />
             <button className={btnDanger}>Delete client</button>
-            <span className="ml-2 text-xs text-slate-500">Brands stay, unlinked. Mailboxes and their messages are removed.</span>
+            <span className="ml-2 text-xs text-slate-500">Vendors stay, unlinked. Mailboxes and their messages are removed.</span>
           </form>
         </div>
       </details>

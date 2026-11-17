@@ -3,8 +3,11 @@
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import type { BrandStatus, Marketplace, MailProvider, VendorType } from "@prisma/client";
+import type { ActivityType, LeadStatus, Marketplace, MailProvider, VendorType } from "@prisma/client";
 import { AUTH_COOKIE, authToken } from "@/lib/auth";
+import {
+  BSR_DAYS, DOMINANT_SELLER_DAYS, PRICE_DAYS, PURCHASE_UNITS, STOCK_RATE_DAYS,
+} from "@/lib/constants";
 import { encrypt } from "@/lib/crypto";
 import { db } from "@/lib/db";
 import { adapterFor } from "@/lib/mail";
@@ -132,90 +135,218 @@ export async function deleteClient(form: FormData) {
   redirect(withParam("/clients", "msg", "Client deleted"));
 }
 
-// ---- brands ----
+// ---- vendors ----
 
-export async function saveBrand(form: FormData) {
+function lines(form: FormData, key: string, lower = false) {
+  return (str(form, key) ?? "")
+    .split(/[\n,]+/)
+    .map((v) => (lower ? v.trim().toLowerCase() : v.trim()))
+    .filter(Boolean);
+}
+
+function num(form: FormData, key: string) {
+  const v = str(form, key);
+  if (v === null) return null;
+  const n = Number(v.replace(/[,%$\s]/g, ""));
+  if (Number.isNaN(n)) throw new Error(`${key} must be a number.`);
+  return n;
+}
+
+function int(form: FormData, key: string) {
+  const n = num(form, key);
+  return n === null ? null : Math.round(n);
+}
+
+function days(form: FormData, key: string, allowed: number[]) {
+  const n = int(form, key);
+  return n !== null && allowed.includes(n) ? n : null;
+}
+
+export async function saveVendor(form: FormData) {
   const id = str(form, "id");
   const data = {
     name: str(form, "name") ?? "",
+    type: (str(form, "type") ?? "BRAND") as VendorType,
     categoryId: str(form, "categoryId"),
-    vendorType: (str(form, "vendorType") ?? "BRAND_OWNER") as VendorType,
-    status: (str(form, "status") ?? "UNTOUCHED") as BrandStatus,
     clientId: str(form, "clientId"),
     mailboxId: str(form, "mailboxId"),
     contactName: str(form, "contactName"),
-    email: str(form, "email")?.toLowerCase() ?? null,
-    phone: str(form, "phone"),
-    website: str(form, "website"),
-    instagram: str(form, "instagram"),
-    facebook: str(form, "facebook"),
-    tiktok: str(form, "tiktok"),
-    linkedin: str(form, "linkedin"),
+    emails: lines(form, "emails", true),
+    phones: lines(form, "phones"),
+    websites: lines(form, "websites"),
+    socials: lines(form, "socials"),
     address: str(form, "address"),
     description: str(form, "description"),
   };
+  const status = (str(form, "status") ?? "UNTOUCHED") as LeadStatus;
   let savedId = id;
-  const returnTo = id ? `/brands/${id}` : "/brands/new";
+  const returnTo = id ? `/vendors/${id}?tab=details` : "/vendors/new";
   try {
-    if (!data.name) throw new Error("Brand name is required.");
+    if (!data.name) throw new Error("Vendor name is required.");
     const newCategory = str(form, "newCategory");
     if (newCategory) {
       const cat = await db.category.upsert({ where: { name: newCategory }, update: {}, create: { name: newCategory } });
       data.categoryId = cat.id;
     }
-    // A worker mailbox must belong to the brand's client.
+    // A worker mailbox must belong to the vendor's client.
     if (data.mailboxId) {
       const mb = await db.mailbox.findUnique({ where: { id: data.mailboxId } });
       if (!mb || mb.clientId !== data.clientId) data.mailboxId = null;
     }
-    const saved = id
-      ? await db.brand.update({ where: { id }, data })
-      : await db.brand.create({ data });
-    savedId = saved.id;
+    if (id) {
+      await db.vendor.update({ where: { id }, data });
+      await wf.changeStatus(id, status, "Changed by hand");
+    } else {
+      savedId = (await db.vendor.create({ data: { ...data, status } })).id;
+    }
   } catch (err) {
     redirect(withParam(returnTo, "error", err instanceof Error ? err.message : String(err)));
   }
   revalidatePath("/", "layout");
-  redirect(withParam(`/brands/${savedId}`, "msg", "Brand saved"));
+  redirect(withParam(`/vendors/${savedId}`, "msg", "Vendor saved"));
 }
 
-export async function deleteBrand(form: FormData) {
+export async function deleteVendor(form: FormData) {
   const id = str(form, "id")!;
-  await db.brand.delete({ where: { id } });
+  const v = await db.vendor.delete({ where: { id } });
   revalidatePath("/", "layout");
-  redirect(withParam("/brands", "msg", "Brand deleted"));
+  redirect(withParam(`/vendors?type=${v.type}`, "msg", "Vendor deleted"));
 }
 
-export async function setBrandStatus(form: FormData) {
+export async function setVendorStatus(form: FormData) {
   const id = str(form, "id")!;
-  const status = str(form, "status") as BrandStatus;
-  return run(back(form, `/brands/${id}`), async () => {
-    await db.brand.update({ where: { id }, data: { status } });
+  const status = str(form, "status") as LeadStatus;
+  return run(back(form, `/vendors/${id}`), async () => {
+    await wf.changeStatus(id, status, str(form, "reason") ?? undefined, str(form, "by"));
   }, "Status updated");
+}
+
+// ---- products ----
+
+export async function saveProduct(form: FormData) {
+  const vendorId = str(form, "vendorId")!;
+  const id = str(form, "id");
+  return run(`/vendors/${vendorId}?tab=products`, async () => {
+    const asin = str(form, "asin")?.toUpperCase();
+    if (!asin) throw new Error("ASIN is required.");
+    const aPlus = str(form, "aPlus");
+    const data = {
+      asin,
+      subNiche: str(form, "subNiche"),
+      bsr: int(form, "bsr"),
+      bsrDays: days(form, "bsrDays", BSR_DAYS),
+      price: num(form, "price"),
+      priceDays: days(form, "priceDays", PRICE_DAYS),
+      monthlySales: int(form, "monthlySales"),
+      amazonStockRate: num(form, "amazonStockRate"),
+      amazonStockRateDays: days(form, "amazonStockRateDays", STOCK_RATE_DAYS),
+      dominantSellerPct: num(form, "dominantSellerPct"),
+      dominantSellerDays: days(form, "dominantSellerDays", DOMINANT_SELLER_DAYS),
+      aPlus: aPlus === "yes" ? true : aPlus === "no" ? false : null,
+      reviews: int(form, "reviews"),
+      rating: num(form, "rating"),
+      marketplaceProfile: str(form, "marketplaceProfile"),
+      forecastPurchase: int(form, "forecastPurchase"),
+    };
+    if (data.rating !== null && (data.rating < 0 || data.rating > 5)) throw new Error("Rating must be between 0 and 5.");
+    if (id) await db.product.update({ where: { id }, data });
+    else await db.product.create({ data: { ...data, vendorId } });
+  }, id ? "Product updated" : "Product added");
+}
+
+export async function deleteProduct(form: FormData) {
+  const id = str(form, "id")!;
+  const p = await db.product.delete({ where: { id } });
+  revalidatePath("/", "layout");
+  redirect(withParam(`/vendors/${p.vendorId}?tab=products`, "msg", "Product deleted"));
+}
+
+// ---- lead activity ----
+
+export async function addActivity(form: FormData) {
+  const vendorId = str(form, "vendorId")!;
+  return run(`/vendors/${vendorId}?tab=lead`, async () => {
+    const summary = str(form, "summary");
+    if (!summary) throw new Error("Write a short summary of the activity.");
+    const date = str(form, "date");
+    await db.activity.create({
+      data: {
+        vendorId,
+        type: (str(form, "type") ?? "CALL") as ActivityType,
+        summary,
+        details: str(form, "details"),
+        by: str(form, "by"),
+        // A picked day is stored at midday UTC so it shows as that day in any time zone.
+        date: date ? new Date(`${date}T12:00:00Z`) : new Date(),
+      },
+    });
+  }, "Activity logged");
+}
+
+export async function deleteActivity(form: FormData) {
+  const id = str(form, "id")!;
+  const a = await db.activity.delete({ where: { id } });
+  revalidatePath("/", "layout");
+  redirect(withParam(`/vendors/${a.vendorId}?tab=lead`, "msg", "Activity deleted"));
+}
+
+// ---- purchasing plan ----
+
+export async function savePurchaseItem(form: FormData) {
+  const vendorId = str(form, "vendorId")!;
+  const id = str(form, "id");
+  return run(`/vendors/${vendorId}?tab=purchasing`, async () => {
+    const vendor = await db.vendor.findUniqueOrThrow({ where: { id: vendorId } });
+    if (vendor.status !== "APPROVED") throw new Error("A purchasing plan is only available for Approved vendors.");
+    const asin = str(form, "asin")?.toUpperCase();
+    const costPrice = num(form, "costPrice");
+    const quantity = int(form, "quantity");
+    if (!asin) throw new Error("ASIN is required.");
+    if (costPrice === null || costPrice < 0) throw new Error("Enter a cost price.");
+    if (!quantity || quantity <= 0) throw new Error("Enter a quantity.");
+    const unit = str(form, "unit") ?? "Units";
+    const data = {
+      asin,
+      productName: str(form, "productName"),
+      moq: int(form, "moq"),
+      costPrice,
+      quantity,
+      unit: PURCHASE_UNITS.includes(unit) ? unit : "Units",
+    };
+    if (id) await db.purchaseItem.update({ where: { id }, data });
+    else await db.purchaseItem.create({ data: { ...data, vendorId } });
+  }, id ? "Line updated" : "Line added");
+}
+
+export async function deletePurchaseItem(form: FormData) {
+  const id = str(form, "id")!;
+  const item = await db.purchaseItem.delete({ where: { id } });
+  revalidatePath("/", "layout");
+  redirect(withParam(`/vendors/${item.vendorId}?tab=purchasing`, "msg", "Line deleted"));
 }
 
 // ---- drafts ----
 
 export async function writeDraft(form: FormData) {
-  const id = str(form, "brandId")!;
-  return run(back(form, `/brands/${id}`), async () => {
+  const id = str(form, "vendorId")!;
+  return run(back(form, `/vendors/${id}`), async () => {
     await wf.writeOutreachDraft(id);
   }, "Outreach draft written");
 }
 
 export async function writeFollowUp(form: FormData) {
-  const id = str(form, "brandId")!;
-  return run(back(form, `/brands/${id}`), async () => {
+  const id = str(form, "vendorId")!;
+  return run(back(form, `/vendors/${id}`), async () => {
     await wf.writeFollowUpDraft(id);
   }, "Follow-up draft written");
 }
 
 export async function writeAllFollowUps(form: FormData) {
   return run(back(form, "/"), async () => {
-    const due = await db.brand.findMany({ where: wf.followUpDueWhere(), select: { id: true } });
+    const due = await db.vendor.findMany({ where: wf.followUpDueWhere(), select: { id: true } });
     const failures: string[] = [];
-    for (const b of due) {
-      await wf.writeFollowUpDraft(b.id).catch((e) => failures.push(e.message));
+    for (const v of due) {
+      await wf.writeFollowUpDraft(v.id).catch((e) => failures.push(e.message));
     }
     const done = due.length - failures.length;
     if (failures.length) throw new Error(`${done} follow-up drafts written, ${failures.length} failed: ${failures[0]}`);
@@ -256,8 +387,8 @@ export async function deleteDraft(form: FormData) {
 }
 
 export async function simulateReply(form: FormData) {
-  const id = str(form, "brandId")!;
-  return run(back(form, `/brands/${id}`), async () => {
+  const id = str(form, "vendorId")!;
+  return run(back(form, `/vendors/${id}`), async () => {
     await wf.simulateReply(id);
   }, "Simulated reply received");
 }
