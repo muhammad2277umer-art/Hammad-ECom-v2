@@ -64,7 +64,7 @@ Set `ANTHROPIC_API_KEY` and the Write draft buttons use Claude to write a person
 1. Push this project to a GitHub repository.
 2. In Vercel, **Add New Project**, import the repository.
 3. Add the same environment variables as your `.env` (`DATABASE_URL`, `DIRECT_URL`, `APP_SECRET`, `APP_PASSWORD`, `CRON_SECRET`, `APP_TIMEZONE`, optional `ANTHROPIC_API_KEY`).
-4. Deploy. Vercel runs `npm run vercel-build` (`scripts/vercel-build.mjs`), which creates or updates the database tables with `prisma db push` before building. If a schema change would drop columns or tables, the build stops; set `PRISMA_ACCEPT_DATA_LOSS=1` for that one deploy, then remove it. Set `SKIP_DB_PUSH=1` to turn the sync off.
+4. Deploy. Vercel runs `npm run vercel-build` (`scripts/vercel-build.mjs`), which creates or updates the database tables with `prisma db push` before building. If a schema change would drop columns or tables, the build stops; set `PRISMA_ACCEPT_DATA_LOSS=1` for that one deploy, then remove it. `PRISMA_FORCE_RESET=1` drops every table and recreates them (all data is lost), for when the old tables can't be converted. Set `SKIP_DB_PUSH=1` to turn the sync off.
 5. `vercel.json` runs a mailbox sync once a day at 06:00 UTC, the most Vercel's Hobby plan allows. For fresher mail, use **Sync all mailboxes** on the dashboard or **Sync now** on a client page any time. On Vercel Pro you can change the schedule to something like `0 */2 * * *`.
 
 ## Project layout
